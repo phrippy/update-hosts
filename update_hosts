@@ -1,0 +1,63 @@
+#!/bin/bash
+
+get_default_custom_content() {
+    local hostname=$(printf "%s" "`hostnamectl hostname`")
+    cat <<-'EOC' | sed 's/^[[:blank:]]*//'
+        # Static table lookup for hostnames.
+        # See hosts(5) for details.
+
+        #127.0.0.1 localhost
+        #::1 localhost
+        127.0.1.1 ${hostname}.localdomain ${hostname}
+        127.0.0.1 aliexpress.ru
+EOC
+}
+
+main() {
+    local hosts_base_file="/etc/hosts.base"
+    local hosts_custom_file="/etc/hosts.custom"
+    local output_file="/etc/hosts"
+    local url='https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/fakenews-gambling/hosts'
+
+    # Download the latest hosts.base file
+    if ! curl --silent --output "$hosts_base_file" "$url"; then
+        printf "%s\n" "Error: Failed to download the latest hosts base file" >&2
+        return 1
+    fi
+
+    # Determine the content to insert (hosts.custom file or default content from function)
+    local insert_content
+    if [[ -f "$hosts_custom_file" ]]; then
+        insert_content=$(<"$hosts_custom_file")
+    else
+        insert_content=$(get_default_custom_content)
+    fi
+
+    # Extract the part before the custom host records
+    local before_custom
+    if ! before_custom=$(awk '/# Custom host records are listed here./{exit}1' "$hosts_base_file"); then
+        printf "%s\n" "Error: Failed to extract the part before custom host records" >&2
+        return 1
+    fi
+
+    # Extract the part after the custom host records
+    local after_custom
+    if ! after_custom=$(awk 'x==1{print} /# End of custom host records./{x=1}' "$hosts_base_file"); then
+        printf "%s\n" "Error: Failed to extract the part after custom host records" >&2
+        return 1
+    fi
+
+    # Combine the parts and the determined content, including the markers
+    if ! {
+        printf "%s\n" "$before_custom"
+        printf "\n# Custom host records are listed here.\n"
+        printf "%s\n" "$insert_content"
+        printf "# End of custom host records.\n\n"
+        printf "%s" "$after_custom"
+    } > "$output_file"; then
+        printf "%s\n" "Error: Failed to combine the files" >&2
+        return 1
+    fi
+}
+
+main

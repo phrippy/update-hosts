@@ -1,0 +1,10 @@
+[Unit]
+Description=Update Hosts Script
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 600
+ExecStart=/usr/bin/update_hosts
+
+[Install]
+WantedBy=multi-user.target
