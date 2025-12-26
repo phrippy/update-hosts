@@ -2,7 +2,7 @@
 
 pkgname=update-hosts
 pkgver=20251226
-pkgrel=3
+pkgrel=4
 pkgdesc="Systemd timer and script that refreshes the system hosts file"
 arch=('any')
 url="https://github.com/phrippy/update-hosts"
@@ -11,7 +11,7 @@ depends=('curl' 'systemd')
 source=('update_hosts'
         'update-hosts.service'
         'update-hosts.timer')
-sha256sums=('e0b7774d2a95e54a91af0911806d256334d88621194aedd95d545018653a6f99'
+sha256sums=('6425b5467d4d0f5980bfaed3c3084cdc82cf917a6b70b0032611ad67c764ac7f'
             '34665c6840e01e6d01e11d4a46fb77612e76a65788eb9bb7b8cfcaef29a2ea30'
             '740afa1de50dec1332ebbb4317c47f22e435b0e539ccde131cb90bd2df3eaacd')
 

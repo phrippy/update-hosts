@@ -8,6 +8,7 @@ readonly HOSTS_OUTPUT_FILE="/etc/hosts"
 readonly HOSTS_URL="https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/fakenews-gambling/hosts"
 readonly CUSTOM_MARKER_START="# Custom host records are listed here."
 readonly CUSTOM_MARKER_END="# End of custom host records."
+temp_base=""
 
 log() {
     printf '%s\n' "$*" >&2
@@ -96,14 +97,20 @@ write_hosts_file() {
     } >"$HOSTS_OUTPUT_FILE" || die "Failed to write $HOSTS_OUTPUT_FILE"
 }
 
+cleanup() {
+    if [[ -n ${temp_base:-} ]]; then
+        rm -f "$temp_base"
+    fi
+}
+
+trap cleanup EXIT
+
 main() {
     require_root
     require_command curl
     require_command awk
 
-    local temp_base
     temp_base=$(mktemp) || die "Unable to create temporary file"
-    trap 'rm -f "$temp_base"' EXIT
 
     download_hosts_base "$temp_base"
     ensure_required_markers "$temp_base"
