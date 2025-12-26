@@ -1,63 +1,120 @@
 #!/bin/bash
+set -euo pipefail
+IFS=$'\n\t'
+
+readonly HOSTS_BASE_FILE="/etc/hosts.base"
+readonly HOSTS_CUSTOM_FILE="/etc/hosts.custom"
+readonly HOSTS_OUTPUT_FILE="/etc/hosts"
+readonly HOSTS_URL="https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/fakenews-gambling/hosts"
+readonly CUSTOM_MARKER_START="# Custom host records are listed here."
+readonly CUSTOM_MARKER_END="# End of custom host records."
+
+log() {
+    printf '%s\n' "$*" >&2
+}
+
+die() {
+    log "Error: $1"
+    exit 1
+}
+
+require_root() {
+    if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+        die "This script must be run as root"
+    fi
+}
+
+require_command() {
+    local cmd=$1
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        die "Required command '$cmd' is not available"
+    fi
+}
 
 get_default_custom_content() {
-    local hostname=$(printf "%s" "`hostnamectl hostname`")
-    cat <<-'EOC' | sed 's/^[[:blank:]]*//'
-        # Static table lookup for hostnames.
-        # See hosts(5) for details.
+    local hostname=""
+    if command -v hostnamectl >/dev/null 2>&1; then
+        hostname=$(hostnamectl hostname 2>/dev/null || printf '')
+    fi
+    if [[ -z "$hostname" ]]; then
+        hostname=$(hostname 2>/dev/null || printf 'localhost')
+    fi
+    cat <<EOC
+# Static table lookup for hostnames.
+# See hosts(5) for details.
 
-        #127.0.0.1 localhost
-        #::1 localhost
-        127.0.1.1 ${hostname}.localdomain ${hostname}
-        127.0.0.1 aliexpress.ru
+#127.0.0.1 localhost
+#::1 localhost
+127.0.1.1 ${hostname}.localdomain ${hostname}
+127.0.0.1 aliexpress.ru
 EOC
 }
 
-main() {
-    local hosts_base_file="/etc/hosts.base"
-    local hosts_custom_file="/etc/hosts.custom"
-    local output_file="/etc/hosts"
-    local url='https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/fakenews-gambling/hosts'
-
-    # Download the latest hosts.base file
-    if ! curl --silent --output "$hosts_base_file" "$url"; then
-        printf "%s\n" "Error: Failed to download the latest hosts base file" >&2
-        return 1
-    fi
-
-    # Determine the content to insert (hosts.custom file or default content from function)
-    local insert_content
-    if [[ -f "$hosts_custom_file" ]]; then
-        insert_content=$(<"$hosts_custom_file")
+get_custom_content() {
+    if [[ -s "$HOSTS_CUSTOM_FILE" ]]; then
+        cat "$HOSTS_CUSTOM_FILE"
     else
-        insert_content=$(get_default_custom_content)
-    fi
-
-    # Extract the part before the custom host records
-    local before_custom
-    if ! before_custom=$(awk '/# Custom host records are listed here./{exit}1' "$hosts_base_file"); then
-        printf "%s\n" "Error: Failed to extract the part before custom host records" >&2
-        return 1
-    fi
-
-    # Extract the part after the custom host records
-    local after_custom
-    if ! after_custom=$(awk 'x==1{print} /# End of custom host records./{x=1}' "$hosts_base_file"); then
-        printf "%s\n" "Error: Failed to extract the part after custom host records" >&2
-        return 1
-    fi
-
-    # Combine the parts and the determined content, including the markers
-    if ! {
-        printf "%s\n" "$before_custom"
-        printf "\n# Custom host records are listed here.\n"
-        printf "%s\n" "$insert_content"
-        printf "# End of custom host records.\n\n"
-        printf "%s" "$after_custom"
-    } > "$output_file"; then
-        printf "%s\n" "Error: Failed to combine the files" >&2
-        return 1
+        get_default_custom_content
     fi
 }
 
-main
+download_hosts_base() {
+    local destination=$1
+    curl --fail --location --show-error --silent "$HOSTS_URL" >"$destination" \
+        || die "Failed to download the latest hosts file"
+}
+
+ensure_required_markers() {
+    local file=$1
+    grep -qF "$CUSTOM_MARKER_START" "$file" \
+        || die "Start marker '$CUSTOM_MARKER_START' is missing from downloaded hosts file"
+    grep -qF "$CUSTOM_MARKER_END" "$file" \
+        || die "End marker '$CUSTOM_MARKER_END' is missing from downloaded hosts file"
+}
+
+extract_before_marker() {
+    local file=$1
+    awk -v marker="$CUSTOM_MARKER_START" 'index($0, marker){exit} {print}' "$file"
+}
+
+extract_after_marker() {
+    local file=$1
+    awk -v marker="$CUSTOM_MARKER_END" 'found{print} index($0, marker){found=1; next}' "$file"
+}
+
+write_hosts_file() {
+    local before_custom=$1
+    local insert_content=$2
+    local after_custom=$3
+
+    {
+        printf '%s\n' "$before_custom"
+        printf '\n%s\n' "$CUSTOM_MARKER_START"
+        printf '%s\n' "$insert_content"
+        printf '%s\n\n' "$CUSTOM_MARKER_END"
+        printf '%s\n' "$after_custom"
+    } >"$HOSTS_OUTPUT_FILE" || die "Failed to write $HOSTS_OUTPUT_FILE"
+}
+
+main() {
+    require_root
+    require_command curl
+    require_command awk
+
+    local temp_base
+    temp_base=$(mktemp) || die "Unable to create temporary file"
+    trap 'rm -f "$temp_base"' EXIT
+
+    download_hosts_base "$temp_base"
+    ensure_required_markers "$temp_base"
+
+    local insert_content before_custom after_custom
+    insert_content=$(get_custom_content)
+    before_custom=$(extract_before_marker "$temp_base") || die "Unable to extract content before custom markers"
+    after_custom=$(extract_after_marker "$temp_base") || die "Unable to extract content after custom markers"
+
+    cat "$temp_base" >"$HOSTS_BASE_FILE" || die "Failed to update $HOSTS_BASE_FILE"
+    write_hosts_file "$before_custom" "$insert_content" "$after_custom"
+}
+
+main "$@"
